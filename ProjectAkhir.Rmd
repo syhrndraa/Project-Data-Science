@@ -1,0 +1,221 @@
+---
+title: "ProjectAkhir"
+author: "Syahrindra Dzaky & Yusuf Adi"
+date: "11/4/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data Cleansing
+
+Library yang dibutuhkan untuk data cleansing  :
+
+```{r}
+#library untuk penggunaan corpus dalam cleaning data
+library(RTextTools)
+library(tm) 
+library(vroom) 
+library(here) 
+```
+
+Membaca dan mengambil dataset yang diperlukan    :
+
+```{r}
+disney <- vroom(here('DisneylandReviews.csv'))
+disney
+```
+
+Menampilkan kolom dataset    :
+
+```{r}
+names(disney)
+```
+
+Melakukan data cleansing    :
+
+```{r}
+location <- disney$Branch
+location1 <- Corpus(VectorSource(location))
+removeunderscore <- function(x) gsub("_", " ", x)
+locationclean <- tm_map(location1, removeunderscore)
+
+ulasan <- disney$Review_Text
+ulasan1 <- Corpus(VectorSource(ulasan))
+removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+ulasanclean <- tm_map(ulasan1, removeURL)
+removeNL <- function(y) gsub("\n", " ", y)
+ulasanclean <- tm_map(ulasanclean, removeNL)
+#replacecomma <- function(y) gsub(",", " ", y)
+#ulasanclean <- tm_map(ulasanclean, replacecomma)
+replacepunc <- function(y) gsub("[[:punct:]]", " ", y)
+ulasanclean <- tm_map(ulasanclean, replacepunc)
+#removetitik2 <- function(y) gsub(":", " ", y)
+#ulasanclean <- tm_map(ulasanclean, removetitik2)
+#removetitikkoma <- function(y) gsub(";", " ", y)
+#ulasanclean <- tm_map(ulasanclean, removetitikkoma)
+removetitik3 <- function(y) gsub("p…", " ", y)
+ulasanclean <- tm_map(ulasanclean, removetitik3)
+removeamp <- function(y) gsub("&amp;", " ", y)
+ulasanclean <- tm_map(ulasanclean, removeamp)
+removeUN <- function(z) gsub("@\\w+", " ", z)
+ulasanclean <- tm_map(ulasanclean, removeUN)
+remove.all <- function(xy) gsub("[^[:alpha:][:space:]]*", "", xy)
+ulasanclean <- tm_map(ulasanclean,remove.all)
+# <- tm_map(ulasanclean, removePunctuation)
+ulasanclean <- tm_map(ulasanclean, tolower)
+myStopwords <- readLines("stopwords_en.txt")
+ulasanclean <- tm_map(ulasanclean,removeWords,myStopwords)
+ulasanclean <- tm_map(ulasanclean, stripWhitespace)
+
+
+datalokasi <- data.frame(Location = unlist(sapply(locationclean, `[`)), stringsAsFactors=F)
+dataulasan <- data.frame(Review = unlist(sapply(ulasanclean, `[`)), stringsAsFactors=F)
+disneyclean <- data.frame(ID = disney$Review_ID, Review = dataulasan$Review, Location = datalokasi$Location)
+View(disneyclean)
+```
+
+Menyimpan data bersih   :
+
+```{r}
+write.csv(disneyclean,file = 'Disney_Clean.csv')
+```
+
+Menampilkan data unik kolom Location untuk mengetahui lokasi disneyland pada data   :
+
+```{r}
+unique(disneyclean$Location)
+```
+
+## Sentiment Analysis
+
+Library yang dibutuhkan
+
+```{r}
+#library untuk membaca fungsi get_nrc
+library(syuzhet)
+#library mengatur warna plot
+library(RColorBrewer)
+```
+
+Mengimport data yang sudah dibersihkan
+
+```{r}
+disneyclean <- read.csv("Disney_Clean.csv")
+```
+
+Menganalisis sentimental    :
+
+```{r}
+review <- as.character(disneyclean$Review) #merubah text menjadi char
+rsent <- get_nrc_sentiment(review)
+review_combine <- cbind(Review = disneyclean$Review, rsent) #klasifikasi data
+```
+
+Memvisualisasikan data analisis sentimental menggunakan barplot   :
+
+```{r}
+par(mar=rep(3,4))
+brplt <- barplot(colSums(rsent),col = brewer.pal(11,"RdBu"),main = "Sentiment Analysis")
+```
+Penyajian data dalam wordcloud    :
+
+```{r}
+library(wordcloud)
+
+myStopwords <- readLines("stopwords_en.txt")
+text <- disneyclean$Review[!is.element(disneyclean$Review, myStopwords)]
+wrdcld <- wordcloud(text, min.freq = 4, max.words=100, random.order = FALSE, colors=brewer.pal(12,"Paired"))
+```
+
+
+Pengelompokan data berdasarkan banyaknya score positive dan negative dari tiap cabang Disneyland    :
+
+```{r}
+data_kelompok <- data.frame(Location = disneyclean$Location, Positive = review_combine$positive, Negative = review_combine$negative)
+
+data_positive <- data_kelompok %>% group_by(Location) %>% summarize(TotalPositive = sum(Positive))
+data_negative <- data_kelompok %>% group_by(Location) %>% summarize(TotalNegative = sum(Negative))
+```
+
+Perhitungan persentase negative dan positive score    :
+
+```{r}
+data_kelompok <- data.frame(Location = data_positive$Location, Positive = data_positive$TotalPositive, Negative = data_negative$TotalNegative, PersentaseNeg = data_negative$TotalNegative/(data_positive$TotalPositive + data_negative$TotalNegative)*100, PersentasePos = data_positive$TotalPositive/(data_positive$TotalPositive + data_negative$TotalNegative)*100)
+data_kelompok
+```
+Penentuan library global    :
+
+```{r global}
+library(shiny)
+library(ggplot2)
+library(dplyr)
+library(here)
+library(vroom)
+```
+
+Pembuatan UI dengan shiny
+
+```{r ui}
+# Define UI for application that draws a histogram
+ui <- fluidPage(
+  headerPanel("Analisis Sentimen Tempat Pariwisata Disneyland"),
+            mainPanel(
+                tabsetPanel(
+                    tabPanel("Data Disneyland", DT::dataTableOutput('dataDisneyland')),
+                    tabPanel("Data Cleaned", DT::dataTableOutput('dataCleaned')),
+                    tabPanel("Data Sentiment", DT::dataTableOutput('table1')),
+                    tabPanel("Data Persentase", DT::dataTableOutput('table2')),
+                    tabPanel("Data Visualization", plotOutput("viz")),
+                    tabPanel("Wordcloud", plotOutput("wc"))
+                  )
+              )
+  )
+
+# Define server logic required to draw a histogram
+server <- function(input, output) {
+    dataDisneyland<- vroom(here("DisneylandReviews.csv"))
+    dataDisneyland<- data.frame(dataDisneyland)
+    # Output Data
+    output$dataDisneyland = DT::renderDataTable({
+      DT::datatable(dataDisneyland, options = list(lengthChange = FALSE))
+    })
+    
+    dataCleaned<- vroom(here("DisneyClean.csv"))
+    dataCleaned<- data.frame(dataCleaned)
+    # Output Data
+    output$dataCleaned = DT::renderDataTable({
+      DT::datatable(dataCleaned, options = list(lengthChange = FALSE))
+    })
+  
+    sent_df <- data.frame(Location = disneyclean$Location, review_combine)
+    # Output Data
+    output$table1 = DT::renderDataTable({
+      DT::datatable(sent_df, options = 1list(lengthChange = FALSE))
+    })
+    
+    # Output Data
+    output$table2 = DT::renderDataTable({
+      DT::datatable(data_kelompok, options = list(lengthChange = FALSE))
+    })
+    
+    output$viz <- renderPlot({
+      par(mar=rep(3,4))
+      brplt <- barplot(colSums(rsent),col = brewer.pal(11,"RdBu"),main = "Sentiment Analysis")
+    })
+    
+    output$wc <- renderPlot({
+       wordcloud(text,
+                  min.freq = 4, max.words=100,
+                  random.order = FALSE, colors=brewer.pal(12,"Paired"))
+    })
+    
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
+```
+
+
